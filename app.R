@@ -15,27 +15,33 @@ library(tidyverse)
 library(waiter)
 library(gt)
 library(bs4Dash)
+library(shinyalert)
+library(shinyjs)
 
 addResourcePath("www", "www")
+jsCode <-"shinyjs.reset_1 = function(params){$('.rating-symbol-foreground').css('width', params);}"
 
 
 ui <- dashboardPage(
-  preloader = list(html = tagList(spin_1(), "Loading ..."), color = "#343a40"),
+  
+  preloader = list(html = tagList(spin_3(), "Loading ..."), color = "#343a40"),
+  scrollToTop = TRUE,
   dashboardHeader(title = dashboardBrand(
     title = "QUESTION SCORING SYSTEM",
-    
+    opacity = 0.5,
     color = "primary",
-    href = "https://rstudio.unhcr.org/iraq/3rp-planning/",
+    href = "https://rstudio.unhcr.org/iraq/qss/",
     image = "www/logo.png"
-  ),
-  titleWidth = "500px"),
+  )),
   dashboardSidebar(sidebarUserPanel(
     image = "www/logo.png",
     name = "Welcome to QSS!"
   )),
   dashboardBody(
+    useShinyjs(),
+    extendShinyjs(text = jsCode, functions = c("reset_1")),
     useWaiter(),
-    waiterOnBusy(html = tagList(spin_circle_square(),
+    waiterOnBusy(html = tagList(spin_3(),
                                 "Processing ...")),
     tags$head(
       # Note the wrapping of the string in HTML()
@@ -63,7 +69,7 @@ ui <- dashboardPage(
     ),
     # Boxes need to be put in a row (or column)
     fluidRow(
-      box(solidHeader = TRUE, status = "warning", title = "Ask or give a score to a question",width = 12,
+      box(status = "success",  title = "Ask or give a score to a question",width = 12,
           HTML("<p>A <strong>question scoring system</strong> is a technique or procedure used to ascertain the group&#39;s desire to propose a solution to a specific problem or topic. This might entail voting on a proposal or decision, with each member casting a vote for or against the solution. Afterward, the votes are tabulated, and the <strong>winner is selected based on the majority vote</strong>.</p>
 <p>This is an electronic voting system in which votes are cast and counted electronically instead of on paper ballots. It is used to increase the speed and accuracy of the voting process and to guarantee the results are visible and verifiable.</p>"
       ),
@@ -85,11 +91,12 @@ ui <- dashboardPage(
       actionButton("save_score", label = "Save the score", class = "btn btn-primary text-bg-primary")
       ),
       
-      box(solidHeader = TRUE, status = "warning",
+      box(status = "success",
         title = "Questions Scores",width = 12,
         gt_output("questions_scores")
       )
-    )
+    ),
+    div(id = "myalert", style = "position: absolute; bottom: 0; right: 0;")
   ),footer = dashboardFooter(
     left = a(
       href = "https://www.unhcr.org/iraq.html",
@@ -121,8 +128,6 @@ server <- function(input, output, session) {
   
   output$questions_scores <- render_gt({
     req(initialized)  # <---- dependency on authentication result
-     
-     
     question_score() %>%
        group_by(question) %>% gt() %>% 
        tab_header(
@@ -230,8 +235,14 @@ server <- function(input, output, session) {
   observeEvent(input$save_score, {
     msg <- list(name = input$variable,
                 value = input$questionRating)
-   
-    dd <-  queryTable(
+    if(is.na(input$questionRating) | input$questionRating <= 0){
+      shinyalert(
+        title = "Issue",
+        type  = "error",
+        text = "Your question grade should be provided.",
+      )
+    } else {
+      dd <-  queryTable(
       Sys.getenv('QUESTIONS_SCORE_FORM_ID'),
       "id" = "_id",
       "Score ID" = "score_id",
@@ -248,19 +259,15 @@ server <- function(input, output, session) {
       ),
       truncate.strings = FALSE
     )  %>% janitor::clean_names() %>% filter(!is.na(question))
-    glimpse(dd)
+   
     c_date <- format(Sys.Date(), format = "%Y-%m-%d")
     if (nrow(dd) > 0) {
-      createAlert(
-        id = "myalert",
-        options = list(
-          title = "Alert",
-          closable = TRUE,
-          width = 12,
-          elevations = 4,
-          status = "primary",
-          content = "Alert content ..."
-        ))
+      glimpse(dd)
+      shinyalert(
+          title = "Warning",
+          type  = "warning",
+          text = "You have already graded the question, therefore we will update it with the new score supplied.",
+        )
       
       df <- dd %>% transmute(id,score = input$questionRating, scoring_date = c_date) %>% filter(!is.na(score))
       if(nrow(df) > 0)
@@ -270,8 +277,7 @@ server <- function(input, output, session) {
           recordIdColumn = "id"
         )
     } else {
-      
-      #add rows
+       #add rows
       dc <-  questions()
       df <- data.frame(matrix(ncol = 5, nrow = 0))
       colnames(df) <-
@@ -284,19 +290,23 @@ server <- function(input, output, session) {
           input$cookies$session_id,
           c_date)
       cc <- df %>% filter(!is.na(score))
-       if(nrow(cc) > 0)
-          importTable(
-            formId = Sys.getenv('QUESTIONS_SCORE_FORM_ID'),
-            data = cc,
-            recordIdColumn = "id"
-          )
-      
-      
+      if(nrow(cc) > 0)
+        importTable(
+          formId = Sys.getenv('QUESTIONS_SCORE_FORM_ID'),
+          data = cc,
+          recordIdColumn = "id"
+        )
+      shinyalert(
+        title = "Saved",
+        type  = "success",
+        text = "Your question grade was sucessfully saved.",
+      )
       
     }
-    
-
+    js$reset_1(0)
     values$refresh_table <- !values$refresh_table
+    }
+    
   })
   
   # save
